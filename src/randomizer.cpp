@@ -277,6 +277,7 @@ struct Randomizer : sms::Mod {
 	std::string spoilerPath_; // where it went
 	std::vector<SmsObject> unlockShines_; // this stage's Shines that give an unlock
 	std::vector<SmsObject> swapShines_;   // this stage's Shines that give a blue coin (tinted blue)
+	std::vector<SmsObject> doneSwapShines_; // the Shines that give a blue coin, already had: a light blue
 	struct CoinTint {
 		SmsObject object;
 		SmsColor color;
@@ -1515,6 +1516,15 @@ struct Randomizer : sms::Mod {
 		appliedSeed_ = -1; // the game is worked out again
 	}
 
+	// A swapped Shine taken, its flag set at once (its episode shows done), though its blue coin, which
+	// gives it, is not picked up yet: it is not counted (the Shine count, the Shadow Marios) until then.
+	bool earlyMarked(int sh)
+	{
+		if (sh < 0 || sh >= 120 || shineCoin_[sh] < 0 || !taken_[sh] || !game().flag_get(0x10000u + (uint32_t)sh))
+			return false;
+		return !game().flag_get(0x10000u + gen::kApCoins[shineCoin_[sh]].bit);
+	}
+
 	// Has the file the place an unlock is on (a Shine, or a blue coin: kApCoinBase + i)?
 	bool placeHad(int place)
 	{
@@ -1624,9 +1634,14 @@ struct Randomizer : sms::Mod {
 			if (sh >= 0 && !game().flag_get(0x10000u + (uint32_t)sh))
 				game().flag_set(0x10000u + (uint32_t)sh, 1);
 		}
+		for (int i = 0; i < 120; ++i) {
+			// a swapped Shine taken: its flag again (the game's save may have lost it)
+			if (taken_[i] && shineCoin_[i] >= 0 && !game().flag_get(0x10000u + (uint32_t)i))
+				game().flag_set(0x10000u + (uint32_t)i, 1);
+		}
 		int shines = 0, coins = 0, swappedCoins = 0, quiet = 0;
 		for (int n = 0; n < 120; ++n)
-			shines += game().flag_get(0x10000u + (uint32_t)n) ? 1 : 0;
+			shines += game().flag_get(0x10000u + (uint32_t)n) && !earlyMarked(n) ? 1 : 0;
 		for (int c = 0; c < gen::kApCoinCount; ++c) {
 			if (game().flag_get(0x10000u + gen::kApCoins[c].bit)) {
 				++coins;
@@ -2317,7 +2332,7 @@ struct Randomizer : sms::Mod {
 		const int had = game().flag_get(0x40000);
 		int shadows   = 0;
 		for (int i = 0; i < 121; ++i)
-			shadows += gen::shadowShine(i) && game().has_shine(i) ? 1 : 0;
+			shadows += gen::shadowShine(i) && game().has_shine(i) && !earlyMarked(i) ? 1 : 0;
 		uint32_t r = 0;
 		const std::vector<int> got = gen::reachable(p, shuffle(), skills, had, false, r, had, shadows);
 		for (size_t i = 0; i < got.size(); ++i) {
@@ -2771,7 +2786,7 @@ struct Randomizer : sms::Mod {
 			return game().shines() >= w;
 		static const int kShadowMarios[] = { 6, 16, 26, 36, 46, 56, 66 };
 		for (int i = 0; i < 7; ++i) {
-			if (!game().has_shine(kShadowMarios[i]))
+			if (!game().has_shine(kShadowMarios[i]) || earlyMarked(kShadowMarios[i]))
 				return false;
 		}
 		return true;
@@ -2919,6 +2934,7 @@ struct Randomizer : sms::Mod {
 		setupDone_       = false;
 		unlockShines_.clear();
 		swapShines_.clear();
+		doneSwapShines_.clear();
 		coinTints_.clear();
 		coinSparkles_.clear();
 		const bool shine = shineTaken_;
@@ -3189,8 +3205,7 @@ struct Randomizer : sms::Mod {
 					static std::string model;
 					if (modelFile("swapshine.bmd", model))
 						e.model = model.c_str();
-					if (!e.collected)
-						swapShines_.push_back(e.object);
+					(e.collected ? doneSwapShines_ : swapShines_).push_back(e.object);
 				}
 			});
 			// a blue coin that holds an unlock, or gives a Shine (the swaps): tinted, each its own option
@@ -3270,8 +3285,18 @@ struct Randomizer : sms::Mod {
 				}
 				if (!SMS_API_HAS(api().game, object_set_color))
 					return;
-				for (size_t i = 0; i < swapShines_.size(); ++i)
-					game().object_set_color(swapShines_[i], SMS_COLOR_MATERIAL, SMS_RGB(70, 140, 255));
+				// the Shines that give a blue coin: the blue coin's blue (a tint, as the purple Shine's: the
+				// material's colour looked silver), light once the file has the Shine. The unlock Shines
+				// already had keep the game's own look of a Shine had.
+				if (SMS_API_HAS(api().game, object_set_tint)) {
+					for (size_t i = 0; i < swapShines_.size(); ++i)
+						game().object_set_tint(swapShines_[i], SMS_RGBA(50, 110, 255, 230));
+					for (size_t i = 0; i < doneSwapShines_.size(); ++i)
+						game().object_set_tint(doneSwapShines_[i], SMS_RGBA(170, 205, 255, 200));
+				} else {
+					for (size_t i = 0; i < swapShines_.size(); ++i)
+						game().object_set_color(swapShines_[i], SMS_COLOR_MATERIAL, SMS_RGB(70, 140, 255));
+				}
 				if (unlockShines_.empty())
 					return;
 				// The hue goes back and forth from green to red through cyan, blue and
@@ -3330,6 +3355,8 @@ struct Randomizer : sms::Mod {
 							if (!game().has_shine(sh)) {
 								game().flag_set(0x10000u + sh, 1);
 								game().flag_set(0x40000, game().flag_get(0x40000) + 1);
+							} else if (taken_[sh]) {
+								game().flag_set(0x40000, game().flag_get(0x40000) + 1); // its flag was set at once: counted now
 							}
 							ownFlag_ = false;
 							showSwapNote("+1 SHINE");
@@ -3354,6 +3381,8 @@ struct Randomizer : sms::Mod {
 				writeTaken();
 				ownFlag_ = true;
 				game().flag_set(0x40001, game().flag_get(0x40001) + 1);
+				if (!game().has_shine(t.shine))
+					game().flag_set(0x10000u + (uint32_t)t.shine, 1); // its episode shows done: not counted until its coin
 				ownFlag_ = false;
 				audio().play_system_sound(SMS_SOUND_COIN);
 				showSwapNote("+1 BLUE COIN");
@@ -3366,8 +3395,8 @@ struct Randomizer : sms::Mod {
 			// (its own, then those down its ways out, shuffled too); so the episode shows
 			// done only once all of them are collected
 			on<SmsEvEpisodeShine>(SMS_EV_EPISODE_SHINE, [this](SmsEvEpisodeShine& e) {
-				if (!enabled())
-					return;
+				if (!enabled() || !shuffle())
+					return; // without the shuffle an episode stands for its own Shine, as in the game
 				refresh();
 				std::vector<int> shines;
 				bool seen[gen::kLevelCount] = {};
