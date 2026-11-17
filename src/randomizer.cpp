@@ -1324,9 +1324,10 @@ struct Randomizer : sms::Mod {
 	// the entrance shuffle, in the order of the option: 0 off, 1 worlds, 2 secrets, 3 both apart, 4 secrets and the rest mixed, 5 all mixed
 	static const char* const* modeNames() { static const char* const k[6] = { "OFF", "WORLDS", "SECRETS", "WORLDS+SECRETS", "SECRETS, REST MIXED", "ALL MIXED" }; return k; }
 	int entranceSetting() const { const int m = setting("entrance_mode", 0); return m < 0 || m > 5 ? 0 : m; }
-	bool shuffle() const { return entranceSetting() != 0; }
+	// (Off with plando entrances still moves those: the generator's mode 5, the levels otherwise in place)
+	bool shuffle() const { return entranceSetting() != 0 || !excl_.entrances.empty(); }
 	// which entrances the shuffle moves, and among which (0 all mixed ... 4, the generator's)
-	int entranceMode() const { const int m = entranceSetting(); return m == 5 ? 0 : m; } // the generator's mode (0 all mixed, 1 worlds, 2 secrets, 3 both, 4 secrets and the rest mixed)
+	int entranceMode() const { const int m = entranceSetting(); return m == 5 ? 0 : m == 0 ? 5 : m; } // the generator's mode (0 all mixed, 1 worlds, 2 secrets, 3 both, 4 secrets and the rest mixed)
 	// the 100-coin Shines hold unlocks too (generator.h; not the randomizer's)
 	bool coinShines() const { return setting("coin_shines", 0) != 0; }
 	// the blue coin trades hold unlocks too (generator.h; not the randomizer's)

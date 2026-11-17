@@ -345,7 +345,7 @@ public:
 		shuffle_       = shuffle;
 		sprayInWorlds_ = sprayInWorlds;
 		rand_    = seed ^ (uint32_t)modeRetry_ * 0x9E3779B9u;
-		skills_  = shuffle ? startSkills : startSkills | kSpray;
+		skills_  = shuffle && mode_ != 5 ? startSkills : startSkills | kSpray; // mode 5: the plando only, the levels in place
 		plan_    = Plan();
 		plan_.start = skills_;
 		plan_.coinShines = coinShines;
@@ -464,6 +464,7 @@ private:
 	bool shuffledClass(int c) const
 	{
 		switch (mode_) {
+		case 5: return false; // nothing but the plando's entrances moves
 		case 1: return c == 2;
 		case 2: return c == 1;
 		case 3: return c != 0;
@@ -973,13 +974,14 @@ private:
 		plan_.swaps.push_back(std::make_pair((uint16_t)0xF00, (uint16_t)0xF00));
 		std::vector<uint16_t> cand;
 		curClass_ = -1;
-		if (shuffle_) {
+		uint16_t planFirst = 0;
+		const bool planStart = shuffle_ && plandoEntrance(0, &planFirst); // the plando's start level
+		if (shuffle_ && (mode_ != 5 || planStart)) {
 			// the level a new file would start in
 			// (with apLogic, drawn from the randomizer's own; one with nothing the
 			// apworld lets Mario have from the start is left out and another drawn)
 			cand = candidates(true, false, false);
-			uint16_t first = 0, planFirst = 0;
-			const bool planStart = plandoEntrance(0, &planFirst); // the plando's start level
+			uint16_t first = 0;
 			if (planStart)
 				first = planFirst;
 			for (; !planStart;) {
@@ -1011,8 +1013,12 @@ private:
 			const bool planE = shuffle_ && !pexits_.empty() && plandoEntrance(pexits_.front().to, &planVal);
 			curClass_ = pexits_.empty() || has(fixed, pexits_.front().to) ? -1 : classOf(pexits_.front().to);
 			// an entrance that is not shuffled keeps its level
-			const bool pin = shuffle_ && !pexits_.empty() && !has(fixed, pexits_.front().to)
+			const bool pinned = shuffle_ && !pexits_.empty() && !has(fixed, pexits_.front().to)
 			                 && !planE && (keeps(pexits_.front().to) || !shuffledClass(curClass_));
+			// an entrance whose level the plando gave to another one, though it would keep it: it leads
+			// to a level the plando freed (the entrance of which it set elsewhere)
+			const bool displaced = pinned && plandoLevel(pexits_.front().to);
+			const bool pin       = pinned && !displaced;
 			if (shuffle_ && !pin && !planE) {
 				cand = candidates(false, rexits_.size() + pexits_.size() < 2);
 				if (cand.empty())
@@ -1020,8 +1026,8 @@ private:
 			}
 			// With a pool of its own the start level took one of the class's levels, so the
 			// last entrance of the class has none left: it leads to one placed already.
-			const bool spent = shuffle_ && !pin && !planE && !pexits_.empty() && cand.empty() && mode_ != 0 && poolSpent(curClass_);
-			if (!pin && !planE && !spent && (pexits_.empty() || (shuffle_ && cand.empty()))) {
+			const bool spent = shuffle_ && !pin && !planE && !displaced && !pexits_.empty() && cand.empty() && mode_ != 0 && poolSpent(curClass_);
+			if (!pin && !planE && !displaced && !spent && (pexits_.empty() || (shuffle_ && cand.empty()))) {
 				if (!giveUnlock())
 					return false;
 				continue;
@@ -1035,6 +1041,26 @@ private:
 				val = planVal;
 				if (has(vals_, val))
 					return false; // the level is placed already
+			} else if (displaced) {
+				std::vector<uint16_t> freed;
+				for (size_t i = 0; i < ex_.entrances.size(); ++i) {
+					const uint16_t k = ex_.entrances[i].first;
+					if (k != 0 && !plandoLevel(k) && !has(vals_, k) && !has(fixed, k))
+						freed.push_back(k);
+				}
+				if (freed.empty()) {
+					// the plando took a level without freeing an entrance (the start's): it leads to a level
+					// placed already (entered already, so not again)
+					for (size_t i = 0; i < vals_.size(); ++i) {
+						if (vals_[i] != 0 && !has(fixed, vals_[i]) && !plandoLevel(vals_[i]))
+							freed.push_back(vals_[i]);
+					}
+					if (freed.empty())
+						return false;
+					place(e.to, freed[draw() % freed.size()]);
+					continue;
+				}
+				val = freed[draw() % freed.size()];
 			} else if (shuffle_ && !pin && !has(fixed, e.to)) {
 				const bool few = pshines_.size() < 3;
 				cand           = candidates(few, rexits_.size() + pexits_.size() < 11);
@@ -1192,7 +1218,10 @@ inline std::vector<int> reachable(const Plan& plan, bool shuffle, uint32_t skill
 		};
 		if (plaza >= 0)
 			todo.push_back(Visit{ plaza, 0 }); // its Shines and its ways out
-		if (shuffle) {
+		bool hasStart = false;
+		for (size_t i = 0; i < plan.swaps.size(); ++i)
+			hasStart = hasStart || plan.swaps[i].first == 0;
+		if (shuffle && hasStart) {
 			const int first = levelIndex(loaded(0));
 			if (first >= 0)
 				todo.push_back(Visit{ first, 0 });
