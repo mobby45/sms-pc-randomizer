@@ -625,12 +625,9 @@ struct Randomizer : sms::Mod {
 			plSel_ = (plSel_ + n - 1) % n;
 		if (n > 0 && (down & SMS_PAD_DOWN))
 			plSel_ = (plSel_ + 1) % n;
-		if (down & (SMS_PAD_LEFT | SMS_PAD_RIGHT)) {
-			if (plStage_ == 0) {
-				plCat_ ^= 1;
-			} else {
-				plStage_ = 0; // back to the rows
-			}
+		if (plStage_ == 0 && (down & (SMS_PAD_LEFT | SMS_PAD_RIGHT))) {
+			// (choosing what a row gets, left and right do nothing: the stick must not leave it; B goes back)
+			plCat_ ^= 1;
 			exclFilter_.clear();
 			plRebuild();
 		}
@@ -643,13 +640,12 @@ struct Randomizer : sms::Mod {
 			if (plStage_ == 0) {
 				const int at = plAssigned(plCat_, row);
 				if (at >= 0) {
-					// set already: taken out
+					// set already: taken out (the list stays where it is)
 					if (plCat_ == 0)
 						excl_.unlocks.erase(excl_.unlocks.begin() + at);
 					else
 						excl_.entrances.erase(excl_.entrances.begin() + at);
 					savePlando();
-					plRebuild();
 				} else {
 					plRow_   = row;
 					plStage_ = 1;
@@ -677,6 +673,13 @@ struct Randomizer : sms::Mod {
 				plStage_ = 0;
 				exclFilter_.clear();
 				plRebuild();
+				// back on the row just set
+				for (size_t i = 0; i < plView_.size(); ++i) {
+					if (plView_[i] == plRow_) {
+						plSel_ = (int)i;
+						plTop_ = plSel_ > 4 ? plSel_ - 4 : 0;
+					}
+				}
 			}
 		}
 		refresh();

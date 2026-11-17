@@ -260,8 +260,8 @@ inline bool swappableShine(int shine)
 		for (int k = 0; k < L.shineCount; ++k) {
 			if ((kShines[L.shineFirst + k].id >> 8) != shine)
 				continue;
-			if (L.id >> 8 == 1)
-				return false; // the plaza's
+			if ((L.id >> 8) <= 1 || (L.id >> 8) == 0x14)
+				return false; // the plaza's, the airstrip's: the airstrip's first Shine, taken quietly, leaves Mario there for good
 			found = true;
 		}
 	}
