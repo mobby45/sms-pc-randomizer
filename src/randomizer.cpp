@@ -347,6 +347,19 @@ struct Randomizer : sms::Mod {
 		}
 	}
 
+	// B (or Backspace) at the first level of the screen: back to the file select, which waits as it
+	// was (nothing started). Without that file select (an older game) the screen is the new file's
+	// first stage: it can only be closed, as Start does.
+	void cancelSetup()
+	{
+		if (!setupAtStart_) {
+			closeSetup();
+			return;
+		}
+		setupOpen_ = false;
+		input().capture(handle(), 0);
+	}
+
 	// ---- the excluded locations tab: entrances (by area), Shines and blue coins
 	std::vector<int> exclAreas() const
 	{
@@ -684,7 +697,7 @@ struct Randomizer : sms::Mod {
 		            plStage_ == 0 ? "A: SET A ROW, OR TAKE IT OUT   LEFT/RIGHT: UNLOCKS / ENTRANCES"
 		                          : "A: PUT IT THERE   LEFT/RIGHT: BACK   TYPE: FILTER");
 		draw().text(x + pw / 2, y + ph - 22, 11, SMS_RGBA(255, 255, 255, 170), SMS_TEXT_CENTER,
-		            "UP/DOWN: ROW   BACKSPACE: ERASE   L/R: TAB   B: CLOSE");
+		            "UP/DOWN: ROW   BACKSPACE: ERASE / BACK   L/R: TAB   B: BACK");
 		(void)d;
 	}
 
@@ -720,8 +733,8 @@ struct Randomizer : sms::Mod {
 			          { "Right", SMS_PAD_RIGHT }, { "Return", SMS_PAD_A }, { "Backspace", SMS_PAD_B },
 			          { "PageUp", SMS_PAD_R }, { "PageDown", SMS_PAD_L } };
 		for (const auto& k : kKeys) {
-			if ((setupRow_ == ROW_SEED || setupTab_ == 2) && k.button == SMS_PAD_B)
-				continue; // Backspace erases a digit (or a letter of the filter) there (the pad's B still closes)
+			if (((setupRow_ == ROW_SEED && setupTab_ == 0) || ((setupTab_ == 2 || setupTab_ == 3) && !exclFilter_.empty())) && k.button == SMS_PAD_B)
+				continue; // Backspace erases a digit (or a letter of the filter) there; with none left it is B (the pad's B still closes)
 			const int code = input().key_from_name(k.key);
 			if (code >= 0 && input().key_down(code))
 				held |= k.button;
@@ -731,7 +744,14 @@ struct Randomizer : sms::Mod {
 		if (down & (SMS_PAD_UP | SMS_PAD_DOWN))
 			seedTyping_ = false;
 		if (down & SMS_PAD_B) {
-			closeSetup();
+			if (setupTab_ == 3 && plStage_ == 1) {
+				// choosing what a row gets: back to the rows
+				plStage_ = 0;
+				exclFilter_.clear();
+				plRebuild();
+			} else {
+				cancelSetup();
+			}
 			return;
 		}
 		// L and R go from tab to tab
@@ -953,7 +973,7 @@ struct Randomizer : sms::Mod {
 				draw().text(x + lw + (pw - lw) / 2, ly, 12, SMS_RGBA(255, 255, 255, 150), SMS_TEXT_CENTER,
 				            "NOTHING: A PUTS THE ROW HERE");
 			draw().text(x + pw / 2, y + ph - 22, 11, SMS_RGBA(255, 255, 255, 170), SMS_TEXT_CENTER,
-			            "TYPE: FILTER   BACKSPACE: ERASE   UP/DOWN: ROW   LEFT/RIGHT: LIST   A: EXCLUDE   L/R: TAB");
+			            "TYPE: FILTER   BACKSPACE: ERASE / BACK   UP/DOWN: ROW   LEFT/RIGHT: LIST   A: EXCLUDE   L/R: TAB   B: BACK");
 			draw().text(x + pw / 2, y + ph - 40, 10, SMS_RGBA(255, 255, 255, 140), SMS_TEXT_CENTER,
 			            "AN ENTRANCE KEEPS ITS LEVEL; A SHINE OR BLUE COIN HOLDS NO UNLOCK");
 			return;
@@ -994,7 +1014,7 @@ struct Randomizer : sms::Mod {
 			draw().text(x + pw / 2, y + ph - 40, 10, pale, SMS_TEXT_CENTER | SMS_TEXT_SHADOW, ("SAVED IN " + shown).c_str());
 		}
 		draw().text(x + pw / 2, y + ph - 22, 11, SMS_RGBA(255, 255, 255, 170), SMS_TEXT_CENTER,
-		            "UP/DOWN: CHOOSE   LEFT/RIGHT: CHANGE   A: OK   L/R: TAB   B: CLOSE");
+		            "UP/DOWN: CHOOSE   LEFT/RIGHT: CHANGE   A: OK   L/R: TAB   B: BACK");
 	}
 
 	// ------------------------------------------------------------------ spoiler
