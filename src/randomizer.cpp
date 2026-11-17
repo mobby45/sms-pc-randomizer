@@ -3577,6 +3577,14 @@ struct Randomizer : sms::Mod {
 			}
 			if (!e.pads)
 				return;
+			// Backspace is B at the file select (the game's menus have no key for it, though the port's own
+			// have), held as a button is: the press that closed our screen goes on to the game's menu, as
+			// the controller's B does
+			if (state().mode == SMS_MODE_STAGE && state().area == 15 && enabled() && !setupOpen_) { // (the file select is the title stage, area 15)
+				const int bs = input().key_from_name("Backspace");
+				if (bs >= 0 && input().key_down(bs))
+					e.pads[0].buttons |= SMS_PAD_B;
+			}
 			// X on the paused page writes the spoiler log when let go, unless it was held for
 			// the tracker (X, then Y)
 			const bool xNow = (e.pads[0].buttons & SMS_PAD_X) != 0;
