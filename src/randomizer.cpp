@@ -262,6 +262,7 @@ struct Randomizer : sms::Mod {
 	bool setupAtMenu_  = false; // the setup is over an empty file's menu: A and B go on to it
 	bool setupOpen_   = false;
 	int seedDigitsHeld_ = 0; // the keyboard's digits down, as bits (the seed row types a number)
+	bool popupInstant_  = false; // the message is a blue coin's: at once, not after a Shine Get's wait
 	bool seedTyping_    = false; // a number being typed over the seed
 	int setupRow_     = 0;
 	int setupTab_     = 0; // 0 play, 1 options, 2 excluded locations, 3 plando
@@ -284,6 +285,15 @@ struct Randomizer : sms::Mod {
 		int variant; // 0 the tint; 1.. a Shine model on a coin: what makes it show (an experiment)
 	};
 	std::vector<CoinTint> coinTints_; // blue coins to colour once their model is made
+	// the blue coins of this stage that hold an unlock (their message comes as they are picked up, not
+	// when the game sets their flag, which is later), and the ones whose message was given
+	struct UnlockCoin {
+		SmsObject object;
+		int coin;  // kApCoins index
+		int place; // where its unlock is: the coin's own, or the Shine it gives
+	};
+	std::vector<UnlockCoin> unlockCoinObjs_;
+	std::vector<char> coinPopped_ = std::vector<char>(gen::kApCoinCount, 0);
 	std::vector<SmsObject> coinSparkles_; // blue coins drawn as a Shine: its sparkles are asked for each tick
 
 	// ------------------------------------------------------------------ state
@@ -1783,12 +1793,13 @@ struct Randomizer : sms::Mod {
 	}
 
 	// The unlock a place gives, shown as it is had.
-	void popupFor(int place)
+	void popupFor(int place, bool instant = false)
 	{
 		for (int i = 0; i < kUnlockCount; ++i) {
 			if (shine_[i] == place) {
-				popup_   = i;
-				popupAt_ = core().time();
+				popup_        = i;
+				popupInstant_ = instant;
+				popupAt_      = core().time();
 				applyOutfit();
 			}
 		}
@@ -2014,11 +2025,16 @@ struct Randomizer : sms::Mod {
 		if (popup_ < 0)
 			return;
 		const double frames = (core().time() - popupAt_) * 30.0;
-		if (frames > 300.0) {
+		if (frames > (popupInstant_ ? 150.0 : 300.0)) {
 			popup_ = -1;
 			return;
 		}
-		const int alpha = popupAlpha(frames);
+		// a Shine's message comes after its Shine Get (the game's own timing, slow); a blue coin's at once
+		int alpha = popupAlpha(frames);
+		if (popupInstant_) {
+			alpha = frames < 6 ? (int)(frames * 42) : frames < 120 ? 255 : (int)((150 - frames) * 8.5);
+			alpha = alpha < 0 ? 0 : alpha > 255 ? 255 : alpha;
+		}
 		if (alpha <= 0)
 			return;
 		char text[64];
@@ -2937,6 +2953,8 @@ struct Randomizer : sms::Mod {
 		doneSwapShines_.clear();
 		coinTints_.clear();
 		coinSparkles_.clear();
+		unlockCoinObjs_.clear();
+		std::fill(coinPopped_.begin(), coinPopped_.end(), 0);
 		const bool shine = shineTaken_;
 		shineTaken_      = false;
 		if (!enabled())
@@ -3072,7 +3090,7 @@ struct Randomizer : sms::Mod {
 		optionBool("coin_unlocks", "Blue coins hold unlocks", false);
 		optionBool("shine_swaps", "Some Shines and blue coins trade places", false);
 		optionBool("tint_swaps", "Shines that give a blue coin are blue", true);
-		optionBool("tint_unlock_coins", "Blue coins that hold an unlock look like a purple Shine", true);
+		optionBool("tint_unlock_coins", "Blue coins that hold an unlock are purple", true);
 		optionBool("tint_swap_coins", "Blue coins that give a Shine look like one", true);
 
 		// Mario's actions
@@ -3215,16 +3233,18 @@ struct Randomizer : sms::Mod {
 				for (int c = 0; c < gen::kApCoinCount; ++c) {
 					if (0x10000u + gen::kApCoins[c].bit != e.flag)
 						continue;
-					bool unlock = false;
-					for (int i = 0; active() && i < kUnlockCount; ++i)
-						unlock = unlock || shine_[i] == gen::kApCoinBase + c;
-					if (unlock && setting("tint_unlock_coins", 1)) {
+					// a coin with a power, its own or the one of the Shine it gives: a purple blue coin
+					int unlockAt = -1;
+					for (int i = 0; active() && i < kUnlockCount; ++i) {
+						if (shine_[i] == gen::kApCoinBase + c)
+							unlockAt = gen::kApCoinBase + c;
+						else if (coinShine_[c] >= 0 && shine_[i] == coinShine_[c])
+							unlockAt = coinShine_[c];
+					}
+					if (unlockAt >= 0)
+						unlockCoinObjs_.push_back(UnlockCoin{ e.object, c, unlockAt });
+					if (unlockAt >= 0 && setting("tint_unlock_coins", 1)) {
 						coinTints_.push_back({ e.object, SMS_RGBA(190, 70, 255, 200), 0 }); // purple
-						// API 1.8 beta 3: a purple Shine, with its sparkles (tinted once its model exists)
-						if (SMS_API_HAS(api().game, object_particle)) {
-							e.game_model = SMS_GAME_MODEL_SHINE;
-							coinSparkles_.push_back(e.object);
-						}
 					}
 					else if (coinShine_[c] >= 0 && setting("tint_swap_coins", 1)) {
 						// API 1.8 beta 3: the game's own Shine model, with its sparkles asked for each tick.
@@ -3347,7 +3367,8 @@ struct Randomizer : sms::Mod {
 							continue;
 						const int sh = coinShine_[c];
 						if (sh < 0) {
-							popupFor(gen::kApCoinBase + c);
+							if (!coinPopped_[c])
+								popupFor(gen::kApCoinBase + c, true);
 						} else {
 							// its Shine instead: the blue coin count back, the Shine had
 							ownFlag_ = true;
@@ -3360,7 +3381,8 @@ struct Randomizer : sms::Mod {
 							}
 							ownFlag_ = false;
 							showSwapNote("+1 SHINE");
-							popupFor(sh);
+							if (!coinPopped_[c])
+								popupFor(sh, true);
 						}
 						break;
 					}
@@ -3386,7 +3408,7 @@ struct Randomizer : sms::Mod {
 				ownFlag_ = false;
 				audio().play_system_sound(SMS_SOUND_COIN);
 				showSwapNote("+1 BLUE COIN");
-				popupFor(gen::kApCoinBase + shineCoin_[t.shine]);
+				popupFor(gen::kApCoinBase + shineCoin_[t.shine], true);
 			});
 #endif
 
@@ -3537,6 +3559,22 @@ struct Randomizer : sms::Mod {
 			});
 		}
 #endif
+
+		// a blue coin that holds an unlock: its message as it is picked up
+		on<SmsEvItem>(SMS_EV_ITEM_COLLECTED, [this](SmsEvItem& e) {
+			if (!active() || e.kind != SMS_ITEM_BLUE_COIN)
+				return;
+			for (size_t i = 0; i < unlockCoinObjs_.size(); ++i) {
+				if (unlockCoinObjs_[i].object == e.item) {
+					const int c = unlockCoinObjs_[i].coin;
+					if (!coinPopped_[c]) {
+						coinPopped_[c] = 1;
+						popupFor(unlockCoinObjs_[i].place, true);
+					}
+					break;
+				}
+			}
+		});
 
 		// the message
 		on<SmsEvShine>(SMS_EV_SHINE_COLLECTED, [this](SmsEvShine& e) {
