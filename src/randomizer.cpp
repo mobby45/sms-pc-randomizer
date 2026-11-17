@@ -1529,6 +1529,11 @@ struct Randomizer : sms::Mod {
 		appliedSeed_ = -1; // the game is worked out again
 	}
 
+	// The airstrip's two Shines (86, 88: in its scenes 0x0001 and 0x1400). Taken quietly, the first would
+	// leave Mario in the airstrip for good: its Shine Get (the animation, the way out) is the game's, and the
+	// swap is made as the game counts it (the count back, the blue coin given).
+	static bool airstripShine(int sh) { return sh == 86 || sh == 88; }
+
 	// A swapped Shine taken, its flag set at once (its episode shows done), though its blue coin, which
 	// gives it, is not picked up yet: it is not counted (the Shine count, the Shadow Marios) until then.
 	bool earlyMarked(int sh)
@@ -1547,7 +1552,7 @@ struct Randomizer : sms::Mod {
 				return taken_[coinShine_[c]] != 0; // its Shine's place, taken quietly
 			return game().flag_get(0x10000u + gen::kApCoins[c].bit) != 0;
 		}
-		return game().has_shine(place); // a swapped Shine's flag comes with its blue coin
+		return game().has_shine(place) && !earlyMarked(place); // a swapped Shine's unlock comes with its blue coin
 	}
 
 	// What the mod keeps for a save file beyond the game's own save (the unlocks had, the
@@ -3399,6 +3404,8 @@ struct Randomizer : sms::Mod {
 			on<SmsEvShineTouch>(SMS_EV_SHINE_TOUCH, [this](SmsEvShineTouch& t) {
 				if (!swapsOn() || t.shine < 0 || t.shine >= 121 || shineCoin_[t.shine] < 0)
 					return;
+				if (airstripShine(t.shine) && !taken_[t.shine])
+					return; // the game's own Shine Get; the swap is made as it is counted (SMS_EV_SHINE_COLLECTED)
 				t.take = SMS_SHINE_TAKE_QUIET;
 				if (taken_[t.shine])
 					return;
@@ -3581,6 +3588,18 @@ struct Randomizer : sms::Mod {
 
 		// the message
 		on<SmsEvShine>(SMS_EV_SHINE_COLLECTED, [this](SmsEvShine& e) {
+			if (swapsOn() && e.shine >= 0 && e.shine < 121 && shineCoin_[e.shine] >= 0 && airstripShine(e.shine) && !taken_[e.shine]) {
+				// a swapped Shine of the airstrip, taken with its Shine Get: not counted until its blue coin, which it gives
+				taken_[e.shine] = 1;
+				writeTaken();
+				ownFlag_ = true;
+				game().flag_set(0x40000, e.total - 1);
+				game().flag_set(0x40001, game().flag_get(0x40001) + 1);
+				ownFlag_ = false;
+				showSwapNote("+1 BLUE COIN");
+				popupFor(gen::kApCoinBase + shineCoin_[e.shine], true);
+				return; // its unlock, if any, comes with the coin
+			}
 			if (!active())
 				return;
 			applyOutfit();
