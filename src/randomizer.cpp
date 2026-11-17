@@ -98,7 +98,7 @@ enum {
 
 const int kDefaultSeed = 1234;
 const int kMaxSeed     = 16777215; // the Mods menu keeps numbers as floats: exact up to 2^24
-const int kWins[]      = { 0, 16, 30, 50, 60, 96 };
+const int kWins[]      = { 0, 16, 30, 50, 60, 96 }; // the old choices: `win` was an index in this
 
 // MARIO_STATUS_* values the rules name.
 const uint32_t kJump = 0x2000880;
@@ -262,6 +262,8 @@ struct Randomizer : sms::Mod {
 	bool setupAtMenu_  = false; // the setup is over an empty file's menu: A and B go on to it
 	bool setupOpen_   = false;
 	int seedDigitsHeld_ = 0; // the keyboard's digits down, as bits (the seed row types a number)
+	int winDigitsHeld_  = 0; // the keyboard's digits down (the win row types a number)
+	bool winTyping_     = false;
 	bool popupInstant_  = false; // the message is a blue coin's: at once, not after a Shine Get's wait
 	bool seedTyping_    = false; // a number being typed over the seed
 	int setupRow_     = 0;
@@ -316,6 +318,22 @@ struct Randomizer : sms::Mod {
 		info("new seed %d", s);
 	}
 	bool allUnlocks() const { return setting("all_unlocks", 0) != 0; }
+	// The win condition: `win` the choice (0 every Shadow Mario's Shine, 16, 30, 50, 60, 96 Shines, 6 a number
+	// of one's own) and `win_custom` that number (1 to 120).
+	int winChoice() const
+	{
+		const int c = setting("win", 0);
+		return c < 0 || c > 6 ? 0 : c;
+	}
+	// The Shines that open Corona Mountain, or 0 for every Shadow Mario's.
+	int winCount() const
+	{
+		const int c = winChoice();
+		if (c < 6)
+			return kWins[c];
+		const int n = setting("win_custom", 30);
+		return n < 1 ? 1 : n > 120 ? 120 : n;
+	}
 
 	// ------------------------------------------------------------------ setup
 
@@ -324,7 +342,7 @@ struct Randomizer : sms::Mod {
 	// starts in the first level of the game chosen. On a game without that event it
 	// opens as the new file's first stage starts, the controller taken, and Start sends
 	// Mario to the first level of the game chosen when it is another.
-	enum { ROW_SEED, ROW_NEW_SEED, ROW_MODE, ROW_ALL, ROW_WIN, ROW_COINS, ROW_TRADES, ROW_BLUE, ROW_SWAPS, ROW_LIVES, ROW_GATES, ROW_SPOILER, ROW_START, ROW_COUNT };
+	enum { ROW_SEED, ROW_NEW_SEED, ROW_MODE, ROW_ALL, ROW_WIN, ROW_WINN, ROW_COINS, ROW_TRADES, ROW_BLUE, ROW_SWAPS, ROW_LIVES, ROW_GATES, ROW_SPOILER, ROW_START, ROW_COUNT };
 
 	void openSetup()
 	{
@@ -513,8 +531,17 @@ struct Randomizer : sms::Mod {
 	std::vector<int> setupTabRows() const
 	{
 		static const int k0[] = { ROW_SEED, ROW_NEW_SEED, ROW_SPOILER, ROW_START };
-		static const int k1[] = { ROW_MODE, ROW_ALL, ROW_WIN, ROW_COINS, ROW_TRADES, ROW_BLUE, ROW_SWAPS, ROW_LIVES, ROW_GATES };
-		return setupTab_ == 0 ? std::vector<int>(k0, k0 + 4) : std::vector<int>(k1, k1 + 9);
+		if (setupTab_ == 0)
+			return std::vector<int>(k0, k0 + 4);
+		std::vector<int> v;
+		v.push_back(ROW_MODE);
+		v.push_back(ROW_ALL);
+		v.push_back(ROW_WIN);
+		if (winChoice() == 6)
+			v.push_back(ROW_WINN); // the number of Shines, with the win set to Choose
+		const int rest[] = { ROW_COINS, ROW_TRADES, ROW_BLUE, ROW_SWAPS, ROW_LIVES, ROW_GATES };
+		v.insert(v.end(), rest, rest + 6);
+		return v;
 	}
 
 	// ---- the plando tab: an unlock on a Shine or blue coin, an entrance to a level (kept in plando.txt)
@@ -747,7 +774,7 @@ struct Randomizer : sms::Mod {
 			          { "Right", SMS_PAD_RIGHT }, { "Return", SMS_PAD_A }, { "Backspace", SMS_PAD_B },
 			          { "PageUp", SMS_PAD_R }, { "PageDown", SMS_PAD_L } };
 		for (const auto& k : kKeys) {
-			if (((setupRow_ == ROW_SEED && setupTab_ == 0 && seedTyping_) || ((setupTab_ == 2 || setupTab_ == 3) && !exclFilter_.empty())) && k.button == SMS_PAD_B)
+			if (((setupRow_ == ROW_SEED && setupTab_ == 0 && seedTyping_) || (setupRow_ == ROW_WINN && setupTab_ == 1 && winTyping_) || ((setupTab_ == 2 || setupTab_ == 3) && !exclFilter_.empty())) && k.button == SMS_PAD_B)
 					continue; // Backspace erases a digit (or a letter of the filter) there; with none left it is B
 			const int code = input().key_from_name(k.key);
 			if (code >= 0 && input().key_down(code))
@@ -756,7 +783,7 @@ struct Randomizer : sms::Mod {
 		const int down = held & ~setupHeld_;
 		setupHeld_     = held;
 		if (down & (SMS_PAD_UP | SMS_PAD_DOWN))
-			seedTyping_ = false;
+			seedTyping_ = winTyping_ = false;
 		if (down & SMS_PAD_B) {
 			if (setupTab_ == 3 && plStage_ == 1) {
 				// choosing what a row gets: back to the rows
@@ -870,11 +897,53 @@ struct Randomizer : sms::Mod {
 				setupSet("all_unlocks", allUnlocks() ? 0 : 1);
 			break;
 		case ROW_WIN:
-			if (a || step) {
-				const int w = setting("win", 0) < 0 || setting("win", 0) > 5 ? 0 : setting("win", 0);
-				setupSet("win", (w + (step < 0 ? 5 : 1)) % 6);
-			}
+			if (a || step)
+				setupSet("win", (winChoice() + (step < 0 ? 6 : 1)) % 7);
 			break;
+		case ROW_WINN: {
+			// left and right a Shine; A the next usual number; digits typed (Backspace erases one)
+			int v = winCount() < 1 ? 1 : winCount();
+			if (step)
+				v = (v - 1 + step + 120) % 120 + 1;
+			if (a) {
+				static const int kUsual[] = { 1, 16, 30, 50, 60, 96, 120 };
+				int next = kUsual[0];
+				for (size_t i = 0; i < sizeof kUsual / sizeof kUsual[0]; ++i) {
+					if (kUsual[i] > v) {
+						next = kUsual[i];
+						break;
+					}
+				}
+				v = next;
+			}
+			int digits = 0;
+			for (int n = 0; n < 10; ++n) {
+				const std::string dn = std::to_string(n), dk = "Keypad " + dn;
+				const int c1 = input().key_from_name(dn.c_str()), c2 = input().key_from_name(dk.c_str());
+				if ((c1 >= 0 && input().key_down(c1)) || (c2 >= 0 && input().key_down(c2)))
+					digits |= 1 << n;
+			}
+			const int wbs = input().key_from_name("Backspace");
+			if (wbs >= 0 && winTyping_ && input().key_down(wbs))
+				digits |= 1 << 10;
+			const int fresh = digits & ~winDigitsHeld_;
+			winDigitsHeld_  = digits;
+			for (int n = 0; n <= 10; ++n) {
+				if (!(fresh & (1 << n)))
+					continue;
+				long t = winTyping_ ? v : 0;
+				t      = n == 10 ? t / 10 : t * 10 + n;
+				if (t > 120 || (n != 10 && t < 1))
+					continue;
+				winTyping_ = true;
+				v          = (int)t;
+			}
+			if (step || a)
+				winTyping_ = false;
+			if (v != winCount())
+				setupSet("win_custom", v < 1 ? 1 : v);
+			break;
+		}
 		case ROW_LIVES:
 			if (a || step)
 				setupSet("infinite_lives", setting("infinite_lives", 0) ? 0 : 1);
@@ -915,11 +984,9 @@ struct Randomizer : sms::Mod {
 
 	void drawSetup(const SmsEvDraw& d)
 	{
-		static const char* const kWinNames[] = { "ALL SHADOW MARIOS", "16 SHINES", "30 SHINES",
-			                                     "50 SHINES", "60 SHINES", "96 SHINES" };
 		static const char* const kTabs[4] = { "PLAY", "OPTIONS", "EXCLUDED LOCATIONS", "PLANDO" };
 		static const char* const kCats[4] = { "ENTRANCES (ZONES)", "SHINES", "BLUE COINS", "ENTRANCES (EPISODES)" };
-		const int w      = setting("win", 0) < 0 || setting("win", 0) > 5 ? 0 : setting("win", 0);
+		const int w      = winCount();
 		const float pw = 640, ph = 440, x = (d.canvas_w - pw) / 2, y = (d.canvas_h - ph) / 2;
 		const SmsColor gold = SMS_RGB(255, 220, 90), white = SMS_RGB(255, 255, 255), pale = SMS_RGB(255, 235, 140);
 		draw().rect(x, y, pw, ph, SMS_RGBA(10, 14, 40, 225));
@@ -997,7 +1064,10 @@ struct Randomizer : sms::Mod {
 		snprintf(rows[ROW_NEW_SEED], 64, "NEW SEED");
 		snprintf(rows[ROW_MODE], 64, "ENTRANCES  < %s >", modeNames()[entranceSetting()]);
 		snprintf(rows[ROW_ALL], 64, "ALL UNLOCKS START  %s", allUnlocks() ? "ON" : "OFF");
-		snprintf(rows[ROW_WIN], 64, "WIN   < %s >", kWinNames[w]);
+		static const char* const kWinNames[] = { "ALL SHADOW MARIOS", "16 SHINES", "30 SHINES", "50 SHINES", "60 SHINES",
+			                                     "96 SHINES", "CHOOSE" };
+		snprintf(rows[ROW_WIN], 64, "WIN   < %s >", kWinNames[winChoice()]);
+		snprintf(rows[ROW_WINN], 64, "SHINES NEEDED   < %d >", w);
 		snprintf(rows[ROW_LIVES], 64, "INFINITE LIVES     %s", setting("infinite_lives", 0) ? "ON" : "OFF");
 		snprintf(rows[ROW_COINS], 64, "100-COIN SHINES    %s", coinShines() ? "ON" : "OFF");
 		snprintf(rows[ROW_TRADES], 64, "BLUE COIN TRADES   %s", tradeShines() ? "ON" : "OFF");
@@ -1258,7 +1328,7 @@ struct Randomizer : sms::Mod {
 			warn("cannot write %s", path.c_str());
 			return;
 		}
-		const int win = kWins[setting("win", 0) < 0 || setting("win", 0) > 5 ? 0 : setting("win", 0)];
+		const int win = winCount();
 		fprintf(f, "Randomizer spoiler\nSeed: %d (%08X)\nShuffle levels: %s\nEntrances: %s\nStart with all unlocks: %s\n", seed(),
 		        (unsigned)seed(), shuffle() ? "yes" : "no", modeNames()[entranceSetting()], allUnlocks() ? "yes" : "no");
 		if (win > 0)
@@ -1380,7 +1450,7 @@ struct Randomizer : sms::Mod {
 	}
 	bool coinUnlocks() const { return setting("coin_unlocks", 0) != 0; }
 	// the Shines that give a blue coin tinted blue (an option, on)
-	bool tintSwaps() const { return setting("tint_swaps", 1) != 0; }
+	bool tintSwaps() const { return true; } // always: the blue Shines, the purple coins, the Shine-like coins are the mod's look
 
 	// The seed's game (with every unlock from the start the walk can get stuck, as the
 	// randomizer itself would: the levels are then shuffled as with the usual start).
@@ -2173,7 +2243,7 @@ struct Randomizer : sms::Mod {
 		}
 		if (!listShown_ && !paused)
 			return;
-		const int win = kWins[setting("win", 0) < 0 || setting("win", 0) > 5 ? 0 : setting("win", 0)];
+		const int win = winCount();
 		// the page's lines; an empty one is a gap
 		char head[5][48];
 		snprintf(head[0], sizeof head[0], "VERSION: v%s", core().mod_info(handle(), "version"));
@@ -2544,8 +2614,8 @@ struct Randomizer : sms::Mod {
 		// where it leads: just under the episode's name; the checks: above the score, under the dots of the
 		// episodes (the Shines the cursor is on stay clear); the ways out (at most two): small, under the score
 		const float H = (float)d.canvas_h, cx = d.canvas_w / 2.0f;
-		draw().text(cx, H * 0.808f - 11.0f + (float)setting("select_leads_y", 0), 18, SMS_RGB(255, 255, 255), SMS_TEXT_CENTER | SMS_TEXT_SHADOW, lines[0].c_str());
-		draw().text(cx, H - 67.0f + (float)setting("select_checks_y", 0), 18, in ? SMS_RGB(60, 230, 60) : SMS_RGB(200, 200, 200), SMS_TEXT_CENTER | SMS_TEXT_SHADOW,
+		draw().text(cx, H * 0.808f - 11.0f, 18, SMS_RGB(255, 255, 255), SMS_TEXT_CENTER | SMS_TEXT_SHADOW, lines[0].c_str());
+		draw().text(cx, H - 67.0f, 18, in ? SMS_RGB(60, 230, 60) : SMS_RGB(200, 200, 200), SMS_TEXT_CENTER | SMS_TEXT_SHADOW,
 		            lines.back().c_str());
 		for (size_t i = 1; i + 1 < lines.size() && i <= 2; ++i)
 			draw().text(cx, H - 26.0f + 14.0f * (float)(i - 1), 13, SMS_RGB(255, 255, 255), SMS_TEXT_CENTER | SMS_TEXT_SHADOW,
@@ -2810,7 +2880,7 @@ struct Randomizer : sms::Mod {
 	// Has the file met the win condition (Corona Mountain opens)?
 	bool winReached()
 	{
-		const int w = kWins[setting("win", 0) < 0 || setting("win", 0) > 5 ? 0 : setting("win", 0)];
+		const int w = winCount();
 		if (w > 0)
 			return game().shines() >= w;
 		static const int kShadowMarios[] = { 6, 16, 26, 36, 46, 56, 66 };
@@ -2872,9 +2942,9 @@ struct Randomizer : sms::Mod {
 		if (!fileOpen_ || !SMS_API_HAS(&api(), files))
 			return;
 		char buf[256];
-		const int n = snprintf(buf, sizeof buf, "seed=%d\nall_unlocks=%d\nwin=%d\nlevels=%d\ncoin_shines=%d\ntrade_shines=%d\n"
+		const int n = snprintf(buf, sizeof buf, "seed=%d\nall_unlocks=%d\nwin=%d\nwin_custom=%d\nlevels=%d\ncoin_shines=%d\ntrade_shines=%d\n"
 		                       "coin_unlocks=%d\nshine_swaps=%d\nentrance_mode=%d\n",
-		                       seed(), allUnlocks() ? 1 : 0, setting("win", 0), shuffle() ? 1 : 0, coinShines() ? 1 : 0,
+		                       seed(), allUnlocks() ? 1 : 0, winChoice(), setting("win_custom", 30), shuffle() ? 1 : 0, coinShines() ? 1 : 0,
 		                       tradeShines() ? 1 : 0, coinUnlocks() ? 1 : 0, shineSwaps() ? 1 : 0, entranceSetting());
 		api().files->write(handle(), SMS_FILES_CURRENT, "game.txt", buf, (uint32_t)n);
 	}
@@ -2891,7 +2961,7 @@ struct Randomizer : sms::Mod {
 			return false;
 		buf[n < (int)sizeof buf - 1 ? n : (int)sizeof buf - 1] = 0;
 		int levels = -1, mode = -1; // a file from before the entrance modes has only levels (on, or off)
-		static const char* const kKeys[] = { "seed", "all_unlocks", "win", "coin_shines", "trade_shines",
+		static const char* const kKeys[] = { "seed", "all_unlocks", "win", "win_custom", "coin_shines", "trade_shines",
 		                                     "coin_unlocks", "shine_swaps" };
 		for (char* line = strtok(buf, "\n"); line; line = strtok(nullptr, "\n")) {
 			char* eq = strchr(line, '=');
@@ -3068,24 +3138,10 @@ struct Randomizer : sms::Mod {
 		loadExclusions();
 		listKey_ = bindKey("unlocks", "F4");
 		posKey_  = bindKey("position", "F2");
-		static const std::vector<const char*> winNames = { "All Shadow Marios", "16 Shines", "30 Shines",
-			                                               "50 Shines", "60 Shines", "96 Shines" };
-		static const std::vector<const char*> modeNames = { "Off", "Worlds among themselves", "Secret courses among themselves",
-		                                                    "Worlds and secret courses, each among its own", "Secret courses among themselves, the rest mixed", "All mixed" };
+		// The Mods menu (F1) keeps what is not set with the new game's screen: the switch, the lives, the spoiler
+		// log, the colours. The game's options (the seed, the entrances, the unlocks' places...) are the
+		// screen's (and `settings.ini`, key = value, as before).
 		optionBool("enabled", "Randomizer", true);
-		// the episode select's two lines, moved by hand (pixels of the game's screen; down is plus)
-		optionNumber("select_leads_y", "Episode select: leads-to line (pixels down)", 0, -80, 80, 1);
-		optionNumber("select_checks_y", "Episode select: checks line (pixels down)", 0, -80, 80, 1);
-		optionNumber("seed", "Seed", (float)kDefaultSeed, 1, (float)kMaxSeed, 1);
-		// New seed: draws a seed and puts it in the Seed row in place of the one there
-		SmsOption newSeed = SmsOption();
-		newSeed.size      = sizeof newSeed;
-		newSeed.key       = "new_seed";
-		newSeed.label     = "New seed";
-		newSeed.type      = SMS_OPTION_ACTION;
-		newSeed.on_change = [](SmsMod*, const char*, void* user) { static_cast<Randomizer*>(user)->drawSeed(); };
-		newSeed.user      = this;
-		config().add_option(handle(), &newSeed);
 		// Write spoiler log: the seed's unlocks and levels, in the mod's data folder
 		SmsOption spoiler = SmsOption();
 		spoiler.size      = sizeof spoiler;
@@ -3095,19 +3151,7 @@ struct Randomizer : sms::Mod {
 		spoiler.on_change = [](SmsMod*, const char*, void* user) { static_cast<Randomizer*>(user)->writeSpoiler(); };
 		spoiler.user      = this;
 		config().add_option(handle(), &spoiler);
-		optionChoice("win", "Win condition", winNames, 0);
-		optionChoice("entrance_mode", "Entrances", modeNames, 0);
-		optionBool("all_unlocks", "Start with all unlocks", false);
-		optionBool("random_seed", "Use random seed", false);
 		optionBool("infinite_lives", "Infinite lives", false);
-		optionBool("open_gates", "Open plaza gates", false);
-		optionBool("coin_shines", "100-coin Shines hold unlocks", false);
-		optionBool("trade_shines", "Blue coin trades hold unlocks", false);
-		optionBool("coin_unlocks", "Blue coins hold unlocks", false);
-		optionBool("shine_swaps", "Some Shines and blue coins trade places", false);
-		optionBool("tint_swaps", "Shines that give a blue coin are blue", true);
-		optionBool("tint_unlock_coins", "Blue coins that hold an unlock are purple", true);
-		optionBool("tint_swap_coins", "Blue coins that give a Shine look like one", true);
 
 		// Mario's actions
 		on<SmsEvPlayerStatus>(SMS_EV_PLAYER_STATUS, [this](SmsEvPlayerStatus& e) -> int {
@@ -3259,10 +3303,10 @@ struct Randomizer : sms::Mod {
 					}
 					if (unlockAt >= 0)
 						unlockCoinObjs_.push_back(UnlockCoin{ e.object, c, unlockAt });
-					if (unlockAt >= 0 && setting("tint_unlock_coins", 1)) {
+					if (unlockAt >= 0) {
 						coinTints_.push_back({ e.object, SMS_RGBA(190, 70, 255, 200), 0 }); // purple
 					}
-					else if (coinShine_[c] >= 0 && setting("tint_swap_coins", 1)) {
+					else if (coinShine_[c] >= 0) {
 						// API 1.8 beta 3: the game's own Shine model, with its sparkles asked for each tick.
 						if (SMS_API_HAS(api().game, object_particle)) {
 							e.game_model = SMS_GAME_MODEL_SHINE;
