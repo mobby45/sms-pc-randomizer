@@ -2487,7 +2487,7 @@ struct Randomizer : sms::Mod {
 			            SMS_TEXT_CENTER | SMS_TEXT_SHADOW, lines[i].c_str());
 	}
 
-	// The tracker: a world's map (the Sunshine_Pop PopTracker pack's, by VGCartographer,
+	// The tracker: a world's map (the Sunshine_Pop PopTracker pack's, by VGCartography,
 	// in tracker/), its places as squares where the pack puts them, green, red or grey; a
 	// cursor (the stick) names the places of the square it is on.
 	void drawTracker(const SmsEvDraw& d)
