@@ -733,8 +733,8 @@ struct Randomizer : sms::Mod {
 			          { "Right", SMS_PAD_RIGHT }, { "Return", SMS_PAD_A }, { "Backspace", SMS_PAD_B },
 			          { "PageUp", SMS_PAD_R }, { "PageDown", SMS_PAD_L } };
 		for (const auto& k : kKeys) {
-			if (((setupRow_ == ROW_SEED && setupTab_ == 0) || ((setupTab_ == 2 || setupTab_ == 3) && !exclFilter_.empty())) && k.button == SMS_PAD_B)
-				continue; // Backspace erases a digit (or a letter of the filter) there; with none left it is B (the pad's B still closes)
+			if (((setupRow_ == ROW_SEED && setupTab_ == 0 && seedTyping_) || ((setupTab_ == 2 || setupTab_ == 3) && !exclFilter_.empty())) && k.button == SMS_PAD_B)
+					continue; // Backspace erases a digit (or a letter of the filter) there; with none left it is B
 			const int code = input().key_from_name(k.key);
 			if (code >= 0 && input().key_down(code))
 				held |= k.button;
@@ -821,7 +821,7 @@ struct Randomizer : sms::Mod {
 					digits |= 1 << n;
 			}
 			const int bs = input().key_from_name("Backspace");
-			if (bs >= 0 && input().key_down(bs))
+			if (bs >= 0 && seedTyping_ && input().key_down(bs)) // (not typing: Backspace is B)
 				digits |= 1 << 10;
 			const int fresh = digits & ~seedDigitsHeld_;
 			seedDigitsHeld_ = digits;
