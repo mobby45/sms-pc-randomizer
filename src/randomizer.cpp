@@ -3205,6 +3205,15 @@ struct Randomizer : sms::Mod {
 		spoiler.on_change = [](SmsMod*, const char*, void* user) { static_cast<Randomizer*>(user)->writeSpoiler(); };
 		spoiler.user      = this;
 		config().add_option(handle(), &spoiler);
+		// Open the data folder: the spoiler logs, plando.txt, exclusions.txt, share.txt
+		SmsOption folder = SmsOption();
+		folder.size      = sizeof folder;
+		folder.key       = "open_folder";
+		folder.label     = "Open the data folder";
+		folder.type      = SMS_OPTION_ACTION;
+		folder.on_change = [](SmsMod*, const char*, void* user) { static_cast<Randomizer*>(user)->openDataFolder(); };
+		folder.user      = this;
+		config().add_option(handle(), &folder);
 		optionBool("infinite_lives", "Infinite lives", false);
 
 		// Mario's actions
