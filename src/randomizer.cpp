@@ -52,6 +52,9 @@ extern "C" __declspec(dllimport) void* __stdcall ShellExecuteA(void*, const char
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
+#ifdef _MSC_VER
+#define strncasecmp _strnicmp // MSVC's name
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
