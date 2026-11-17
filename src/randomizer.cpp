@@ -1844,7 +1844,8 @@ struct Randomizer : sms::Mod {
 	bool active()
 	{
 		refresh();
-		return appliedEnabled_ == 1 && !allUnlocks();
+		// (with every unlock from the start the mod keeps out of it, but for the unlocks a plando places)
+		return appliedEnabled_ == 1 && (!allUnlocks() || !excl_.unlocks.empty());
 	}
 
 	// Is the unlock still locked?

@@ -330,6 +330,7 @@ public:
 		plandoSkills_  = 0;
 		for (size_t i = 0; i < ex_.unlocks.size(); ++i)
 			plandoSkills_ |= ex_.unlocks[i].second;
+		startSkills &= ~plandoSkills_; // an unlock the plando places is not had from the start
 		mode_          = entranceMode;
 		apLogic_       = apLogic || coinUnlocks || shineSwaps;
 		coinUnlocks_   = coinUnlocks;
