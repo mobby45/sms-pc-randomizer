@@ -1,0 +1,32 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  generator-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generator checks
+        run: |
+          g++ -std=c++17 -O1 -Isrc tests/generator_test.cpp -o generator_test
+          ./generator_test
+
+  mod:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSMS_MODS_OUT=${{ github.workspace }}/out
+      - name: Build
+        run: cmake --build build --config Release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: randomizer-${{ matrix.os }}
+          path: out/randomizer
