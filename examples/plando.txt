@@ -1,0 +1,12 @@
+# plando.txt: what you place, the generator draws the rest. Put it in the mod's data folder
+# (the new game screen's "Open the data folder"), or build it in the PLANDO tab.
+#
+# An unlock on a Shine (its number or its name) or on a blue coin (its name, or World/Name).
+# Blue coins need the Blue coin unlocks option.
+unlock double jump = shine 1
+unlock y camera = coin Bianco Hills/Wall Side M
+unlock ground pound = coin Bianco Hills/Tourist
+#
+# An entrance: the level asked for (area and episode, in hex) = the level loaded.
+# "start" is where a new file starts. Entrances work with every Entrances mode, Off included.
+entrance 0200 = 0504

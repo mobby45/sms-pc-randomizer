@@ -45,6 +45,9 @@ struct TrackerMark {
 
 #include <stddef.h>
 #include <stdint.h>
+#ifdef _WIN32
+extern "C" __declspec(dllimport) void* __stdcall ShellExecuteA(void*, const char*, const char*, const char*, const char*, int);
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -342,7 +345,7 @@ struct Randomizer : sms::Mod {
 	// starts in the first level of the game chosen. On a game without that event it
 	// opens as the new file's first stage starts, the controller taken, and Start sends
 	// Mario to the first level of the game chosen when it is another.
-	enum { ROW_SEED, ROW_NEW_SEED, ROW_MODE, ROW_ALL, ROW_WIN, ROW_WINN, ROW_COINS, ROW_TRADES, ROW_BLUE, ROW_SWAPS, ROW_LIVES, ROW_GATES, ROW_SPOILER, ROW_START, ROW_COUNT };
+	enum { ROW_SEED, ROW_NEW_SEED, ROW_MODE, ROW_ALL, ROW_WIN, ROW_WINN, ROW_COINS, ROW_TRADES, ROW_BLUE, ROW_SWAPS, ROW_LIVES, ROW_GATES, ROW_SPOILER, ROW_FOLDER, ROW_EXPORT, ROW_IMPORT, ROW_START, ROW_COUNT };
 
 	void openSetup()
 	{
@@ -530,9 +533,9 @@ struct Randomizer : sms::Mod {
 	}
 	std::vector<int> setupTabRows() const
 	{
-		static const int k0[] = { ROW_SEED, ROW_NEW_SEED, ROW_SPOILER, ROW_START };
+		static const int k0[] = { ROW_SEED, ROW_NEW_SEED, ROW_SPOILER, ROW_FOLDER, ROW_EXPORT, ROW_IMPORT, ROW_START };
 		if (setupTab_ == 0)
-			return std::vector<int>(k0, k0 + 4);
+			return std::vector<int>(k0, k0 + 7);
 		std::vector<int> v;
 		v.push_back(ROW_MODE);
 		v.push_back(ROW_ALL);
@@ -741,6 +744,8 @@ struct Randomizer : sms::Mod {
 		            "UP/DOWN: ROW   BACKSPACE: ERASE / BACK   L/R: TAB   B: BACK");
 		(void)d;
 	}
+
+#include "share.inc"
 
 	void setupSet(const char* key, int value)
 	{
@@ -974,6 +979,18 @@ struct Randomizer : sms::Mod {
 				spoilerSeed_ = seed();
 			}
 			break;
+		case ROW_FOLDER:
+			if (a)
+				openDataFolder();
+			break;
+		case ROW_EXPORT:
+			if (a)
+				exportGame();
+			break;
+		case ROW_IMPORT:
+			if (a)
+				importGame();
+			break;
 		case ROW_START:
 			if (a)
 				closeSetup();
@@ -1075,6 +1092,9 @@ struct Randomizer : sms::Mod {
 		snprintf(rows[ROW_SWAPS], 64, "SHINES <> COINS    %s", shineSwaps() ? "ON" : "OFF");
 		snprintf(rows[ROW_GATES], 64, "OPEN PLAZA GATES   %s", setting("open_gates", 0) ? "ON" : "OFF");
 		snprintf(rows[ROW_SPOILER], 64, "WRITE SPOILER LOG%s", spoilerSeed_ == seed() ? "  (WRITTEN)" : "");
+		snprintf(rows[ROW_FOLDER], 64, "OPEN THE DATA FOLDER");
+		snprintf(rows[ROW_EXPORT], 64, "EXPORT THIS GAME (share.txt)");
+		snprintf(rows[ROW_IMPORT], 64, "IMPORT A GAME (share.txt)");
 		snprintf(rows[ROW_START], 64, "START");
 		const std::vector<int> tabRows = setupTabRows();
 		for (size_t k = 0; k < tabRows.size(); ++k) {
@@ -1087,7 +1107,9 @@ struct Randomizer : sms::Mod {
 			            SMS_TEXT_SHADOW | (i == ROW_START ? SMS_TEXT_CENTER : 0), rows[i]);
 		}
 		// where the spoiler log went, its end when the whole path is too long
-		if (setupTab_ == 0 && spoilerSeed_ == seed() && !spoilerPath_.empty()) {
+		if (setupTab_ == 0 && core().time() - shareNoteAt_ < 5.0) {
+			draw().text(x + pw / 2, y + ph - 40, 11, pale, SMS_TEXT_CENTER | SMS_TEXT_SHADOW, shareNote_.c_str());
+		} else if (setupTab_ == 0 && spoilerSeed_ == seed() && !spoilerPath_.empty()) {
 			std::string shown = spoilerPath_;
 			for (size_t i = 0; i < shown.size(); ++i) {
 				if (shown[i] == '\\')
@@ -1386,7 +1408,39 @@ struct Randomizer : sms::Mod {
 				continue;
 			}
 			const std::vector<uint16_t> levels = placeLevels(shine_[i]);
+			// without the entrance shuffle, a world's episodes in one line: "Noki Bay, episodes 1, 2, 4-8"
+			std::vector<char> grouped(levels.size(), 0);
+			for (size_t k = 0; k < levels.size() && !shuffle(); ++k) {
+				const int area = levels[k] >> 8;
+				if (grouped[k] || !SMS_API_HAS(&api(), world) || api().world->area_kind(area) != SMS_AREA_WORLD)
+					continue;
+				std::vector<int> eps;
+				for (size_t m = k; m < levels.size(); ++m) {
+					if ((levels[m] >> 8) == area) {
+						eps.push_back((levels[m] & 0xFF) + 1);
+						grouped[m] = 1;
+					}
+				}
+				if (eps.size() < 2) {
+					grouped[k] = 0;
+					continue;
+				}
+				std::sort(eps.begin(), eps.end());
+				std::string list;
+				for (size_t m = 0; m < eps.size();) {
+					size_t e = m;
+					while (e + 1 < eps.size() && eps[e + 1] == eps[e] + 1)
+						++e;
+					list += (list.empty() ? "" : ", ") + std::to_string(eps[m]) + (e > m ? "-" + std::to_string(eps[e]) : "");
+					m = e + 1;
+				}
+				const std::vector<int> areas = exclAreas();
+				const size_t ai = std::find(areas.begin(), areas.end(), area) - areas.begin();
+				fprintf(f, "%-20s   in %s, episodes %s\n", "", ai < areas.size() ? exclLabel(0, (int)ai).c_str() : levelName(levels[k]).c_str(), list.c_str());
+			}
 			for (size_t k = 0; k < levels.size(); ++k) {
+				if (grouped[k])
+					continue;
 				fprintf(f, "%-20s   in %s\n", "", levelName(levels[k]).c_str());
 				if (!shuffle())
 					continue;
@@ -2271,10 +2325,10 @@ struct Randomizer : sms::Mod {
 		lines[count++]   = { head[3], bright };
 		lines[count++]   = { "", bright };
 		lines[count++]   = { head[4], bright };
-		for (int i = 0; i < kUnlockCount; ++i) {
-			if (!locked(i))
-				lines[count++] = { kUnlocks[i].display, bright };
-		}
+		// every unlock: grey while locked, white once had
+		const SmsColor locked_ = SMS_RGBA(150, 150, 150, 190);
+		for (int i = 0; i < kUnlockCount; ++i)
+			lines[count++] = { kUnlocks[i].display, locked(i) ? locked_ : bright };
 		// As large as it fits, every unlock shown, the unlocks in two columns if need be.
 		// Paused, it goes down the right side, between the port's save state hints and
 		// FLUDD's water gauge, clear of the pause menu; otherwise (F4) at the top left.
