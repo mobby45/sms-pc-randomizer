@@ -47,6 +47,10 @@ struct TrackerMark {
 #include <stdint.h>
 #ifdef _WIN32
 extern "C" __declspec(dllimport) void* __stdcall ShellExecuteA(void*, const char*, const char*, const char*, const char*, int);
+#else
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #endif
 #include <stdio.h>
 #include <stdlib.h>

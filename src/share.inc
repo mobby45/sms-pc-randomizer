@@ -6,18 +6,36 @@
 
 	std::string dataFolder() const { return core().data_dir(handle()); }
 
-	// Opens the mod's data folder (the spoiler logs, plando.txt, exclusions.txt, share.txt) in the system's files
+	// Opens the mod's data folder (the spoiler logs, plando.txt, exclusions.txt, share.txt) in the system's files,
+	// and says where it is (on the new game screen, and in the log): the opener may be missing (Linux: xdg-open;
+	// macOS: open), and the player can then go there by hand.
 	void openDataFolder()
 	{
 		const std::string dir = dataFolder();
+		info("data folder: %s", dir.c_str());
+		shareNote_   = "DATA FOLDER: " + dir;
+		shareNoteAt_ = core().time();
 #ifdef _WIN32
 		ShellExecuteA(nullptr, "open", dir.c_str(), nullptr, nullptr, 1);
-#elif defined(__APPLE__)
-		if (system(("open '" + dir + "' &").c_str()) != 0)
-			warn("cannot open %s", dir.c_str());
 #else
-		if (system(("xdg-open '" + dir + "' &").c_str()) != 0)
+#ifdef __APPLE__
+		static const char* const opener = "open";
+#else
+		static const char* const opener = "xdg-open";
+#endif
+		// no shell (a path with a quote is fine): a child that starts the opener and goes, so that nothing is left to wait for
+		const pid_t child = fork();
+		if (child == 0) {
+			if (fork() == 0) {
+				execlp(opener, opener, dir.c_str(), (char*)nullptr);
+				_exit(127); // no opener
+			}
+			_exit(0);
+		} else if (child > 0) {
+			waitpid(child, nullptr, 0);
+		} else {
 			warn("cannot open %s", dir.c_str());
+		}
 #endif
 	}
 
