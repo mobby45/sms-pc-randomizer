@@ -2541,10 +2541,15 @@ struct Randomizer : sms::Mod {
 		char t[64];
 		snprintf(t, sizeof t, "%d checks in logic here", in);
 		lines.push_back(t);
-		float y = d.canvas_h - 40.0f - 24.0f * (float)lines.size();
-		for (size_t i = 0; i < lines.size(); ++i, y += 24)
-			draw().text(d.canvas_w / 2, y, 18, i + 1 == lines.size() ? (in ? SMS_RGB(60, 230, 60) : SMS_RGB(200, 200, 200)) : SMS_RGB(255, 255, 255),
-			            SMS_TEXT_CENTER | SMS_TEXT_SHADOW, lines[i].c_str());
+		// where it leads: just under the episode's name; the checks: above the score, under the dots of the
+		// episodes (the Shines the cursor is on stay clear); the ways out (at most two): small, under the score
+		const float H = (float)d.canvas_h, cx = d.canvas_w / 2.0f;
+		draw().text(cx, H * 0.808f - 11.0f + (float)setting("select_leads_y", 0), 18, SMS_RGB(255, 255, 255), SMS_TEXT_CENTER | SMS_TEXT_SHADOW, lines[0].c_str());
+		draw().text(cx, H - 67.0f + (float)setting("select_checks_y", 0), 18, in ? SMS_RGB(60, 230, 60) : SMS_RGB(200, 200, 200), SMS_TEXT_CENTER | SMS_TEXT_SHADOW,
+		            lines.back().c_str());
+		for (size_t i = 1; i + 1 < lines.size() && i <= 2; ++i)
+			draw().text(cx, H - 26.0f + 14.0f * (float)(i - 1), 13, SMS_RGB(255, 255, 255), SMS_TEXT_CENTER | SMS_TEXT_SHADOW,
+			            lines[i].c_str());
 	}
 
 	// The tracker: a world's map (the Sunshine_Pop PopTracker pack's, by VGCartography,
@@ -3068,6 +3073,9 @@ struct Randomizer : sms::Mod {
 		static const std::vector<const char*> modeNames = { "Off", "Worlds among themselves", "Secret courses among themselves",
 		                                                    "Worlds and secret courses, each among its own", "Secret courses among themselves, the rest mixed", "All mixed" };
 		optionBool("enabled", "Randomizer", true);
+		// the episode select's two lines, moved by hand (pixels of the game's screen; down is plus)
+		optionNumber("select_leads_y", "Episode select: leads-to line (pixels down)", 0, -80, 80, 1);
+		optionNumber("select_checks_y", "Episode select: checks line (pixels down)", 0, -80, 80, 1);
 		optionNumber("seed", "Seed", (float)kDefaultSeed, 1, (float)kMaxSeed, 1);
 		// New seed: draws a seed and puts it in the Seed row in place of the one there
 		SmsOption newSeed = SmsOption();
