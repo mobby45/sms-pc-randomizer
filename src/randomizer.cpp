@@ -134,6 +134,10 @@ const SmsVec3 kWarpPos   = { 3605, 300, 5141 };
 #if SMS_MOD_API_MINOR > 6 || (SMS_MOD_API_MINOR == 6 && (SMS_MOD_API_PRERELEASE == 0 || SMS_MOD_API_PRERELEASE >= 2))
 #define RANDOMIZER_16_BETA2 1
 #endif
+// API 1.8 beta 4: episodes named by mods (world->set_episode_name)
+#if SMS_MOD_API_MINOR > 8 || (SMS_MOD_API_MINOR == 8 && (SMS_MOD_API_PRERELEASE == 0 || SMS_MOD_API_PRERELEASE >= 4))
+#define RANDOMIZER_EPISODE_NAMES 1
+#endif
 // API 1.5 beta 7: the file select waits for a mod (SMS_EV_FILE_STARTING)
 #if SMS_MOD_API_MINOR > 5 || SMS_MOD_API_PRERELEASE == 0 || SMS_MOD_API_PRERELEASE >= 7
 #define RANDOMIZER_BETA7 1
@@ -274,6 +278,8 @@ struct Randomizer : sms::Mod {
 	int seedDigitsHeld_ = 0; // the keyboard's digits down, as bits (the seed row types a number)
 	int winDigitsHeld_  = 0; // the keyboard's digits down (the win row types a number)
 	bool winTyping_     = false;
+	bool episodeNamesOk_ = false; // the episodes' names are set (updateEpisodeNames)
+	int titleMissingFor_ = -1; // the episode (area << 8 | episode) whose level has no title in the game's select
 	bool popupInstant_  = false; // the message is a blue coin's: at once, not after a Shine Get's wait
 	bool seedTyping_    = false; // a number being typed over the seed
 	int setupRow_     = 0;
@@ -365,7 +371,7 @@ struct Randomizer : sms::Mod {
 		setupOpen_  = true;
 		setupRow_   = ROW_START;
 		setupTab_   = 0;
-		setupFirst_ = shuffle() ? swapOf(0) : (uint16_t)0x100;
+		setupFirst_ = newFileStart();
 		setupHeld_  = ~0; // what is held as it opens does not count
 	}
 
@@ -379,7 +385,7 @@ struct Randomizer : sms::Mod {
 			newFile_   = false;
 			return;
 		}
-		const uint16_t first = shuffle() ? swapOf(0) : (uint16_t)0x100;
+		const uint16_t first = newFileStart();
 		if (first != setupFirst_ && SMS_API_HAS(api().game, warp)) {
 			startPlaced_ = first; // already the shuffle's: not swapped again as it loads
 			game().warp(first >> 8, first & 0xFF);
@@ -1086,7 +1092,8 @@ struct Randomizer : sms::Mod {
 		char rows[ROW_COUNT][64];
 		snprintf(rows[ROW_SEED], 64, "SEED        < %d >", seed());
 		snprintf(rows[ROW_NEW_SEED], 64, "NEW SEED");
-		snprintf(rows[ROW_MODE], 64, "ENTRANCES  < %s >", modeNames()[entranceSetting()]);
+		snprintf(rows[ROW_MODE], 64, "ENTRANCES  < %s >",
+		         entranceSetting() == 0 && !excl_.entrances.empty() ? "OFF + PLANDO" : modeNames()[entranceSetting()]);
 		snprintf(rows[ROW_ALL], 64, "ALL UNLOCKS START  %s", allUnlocks() ? "ON" : "OFF");
 		static const char* const kWinNames[] = { "ALL SHADOW MARIOS", "16 SHINES", "30 SHINES", "50 SHINES", "60 SHINES",
 			                                     "96 SHINES", "CHOOSE" };
@@ -1138,7 +1145,8 @@ struct Randomizer : sms::Mod {
 	{
 		switch (area) {
 		case 0x00: return "Delfino Airstrip";
-		case 0x14: return "Delfino Airstrip (from the plaza)";
+		case 0x10: return "Noki Bay: the Red Coin Fish";
+		case 0x14: return "Delfino Airstrip";
 		case 0x15: return "Super Slide";
 		case 0x16: return "Pachinko";
 		case 0x17: return "Red Coin Field";
@@ -1188,6 +1196,12 @@ struct Randomizer : sms::Mod {
 	std::string levelName(uint16_t level) const
 	{
 		const int area = level >> 8, ep = level & 0xFF;
+		// the roller coaster's two scenarios: the first holds Pinna Park 8's Shine (Shine 37); the second leads back to
+		// that episode and holds none: the Mecha Bowser fight (as the player saw it)
+		if (level == 0x3A00)
+			return "Pinna Park: Roller Coaster Balloons";
+		if (level == 0x3A01)
+			return "Pinna Park: Mecha Bowser Fight";
 		if (areaTitle(area))
 			return areaTitle(area);
 		const char* an  = SMS_API_HAS(api().game, area_name) ? game().area_name(area) : nullptr;
@@ -1944,6 +1958,67 @@ struct Randomizer : sms::Mod {
 		}
 	}
 
+	// API 1.8 beta 4: an episode whose level has no title in the game (the plaza's secret courses, a fight...) is
+	// named by the mod, in the game's own font; every other episode keeps the game's name (cleared). The names
+	// are the mod's own, not saved: set again whenever the game is worked out.
+	void updateEpisodeNames()
+	{
+#ifdef RANDOMIZER_EPISODE_NAMES
+		episodeNamesOk_ = false;
+		if (!SMS_API_HAS(&api(), world) || !SMS_API_HAS(api().world, set_episode_name))
+			return;
+		int named = 0, refused = 0, worlds = 0;
+		// the secret courses in the worlds that the game names by a Shine (kExTitles in the select's handler)
+		auto gameTitled = [this](uint16_t level) {
+			const int area = level >> 8;
+			// a world's own area (not its other areas, which share its episodes' names: asking them for a name gives
+			// the world's, though their level is another)
+			if (api().world->area_kind(area) == SMS_AREA_WORLD && api().world->episode_count(area) > 0 && (level & 0xFF) < 8)
+				return true;
+			static const int kEx[] = { 0x1F, 0x20, 0x28, 0x29, 0x2A, 0x2E, 0x2F, 0x30, 0x32, 0x33 };
+			for (size_t k = 0; k < sizeof kEx / sizeof kEx[0]; ++k) {
+				if (kEx[k] == area)
+					return true;
+			}
+			return false;
+		};
+		// Every area of a world shares its episodes' names: all cleared first, then the names set (a clear after a
+		// set, from another area of the same world, would take the name away)
+		for (int area = 0; area < 0x40; ++area) {
+			if (api().world->episode_count(area) <= 0)
+				continue;
+			for (int ep = 0; ep < 8; ++ep)
+				api().world->set_episode_name(handle(), area, ep, nullptr);
+		}
+		for (int area = 0; area < 0x40; ++area) {
+			if (api().world->episode_count(area) <= 0 || api().world->area_kind(area) != SMS_AREA_WORLD)
+				continue; // (a world's other areas have no select of their own)
+			++worlds;
+			for (int ep = 0; ep < 8; ++ep) {
+				const uint16_t id   = (uint16_t)(area << 8 | ep);
+				const uint16_t dest = enabled() && shuffle() ? swapOf(id) : id;
+				if (dest != id && !gameTitled(dest)) {
+					// the select's title is the episode's own name, as the game writes them: without the zone before the
+					// colon ("The Red Coin Fish", not "Noki Bay: the Red Coin Fish")
+					std::string title = levelName(dest);
+					const size_t colon = title.find(": ");
+					if (colon != std::string::npos) {
+						title = title.substr(colon + 2);
+						if (!title.empty())
+							title[0] = (char)toupper((unsigned char)title[0]);
+					}
+					if (api().world->set_episode_name(handle(), area, ep, title.c_str()))
+						++named;
+					else
+						++refused; // the world's episodes may not be loaded yet: asked again as the select opens
+				}
+			}
+		}
+		episodeNamesOk_ = worlds > 0 && refused == 0; // no world yet: the game's stages are not loaded
+		info("episode names: %d set, %d refused (%d areas)", named, refused, worlds);
+#endif
+	}
+
 	// Works out the seed's game again when the seed, the switch, the start or the
 	// shuffle changed.
 	void refresh()
@@ -1964,6 +2039,7 @@ struct Randomizer : sms::Mod {
 		appliedAll_     = all;
 		appliedShuffle_ = sh;
 		swaps_.clear();
+		updateEpisodeNames();
 		plan_ = gen::Plan();
 		std::fill(shineCoin_.begin(), shineCoin_.end(), -1);
 		std::fill(coinShine_.begin(), coinShine_.end(), -1);
@@ -1993,6 +2069,7 @@ struct Randomizer : sms::Mod {
 		plan_      = plan;
 		trackerAt_ = -1;
 		swaps_     = plan.swaps;
+		updateEpisodeNames();
 		shineCoin_ = plan.shineCoin;
 		coinShine_ = plan.coinShine;
 #ifdef RANDOMIZER_BETA6
@@ -2179,6 +2256,13 @@ struct Randomizer : sms::Mod {
 		char text[64];
 		snprintf(text, sizeof text, "UNLOCKED %s", kUnlocks[popup_].display);
 		draw().text(d.canvas_w / 2, 110, 24, SMS_RGBA(255, 255, 255, alpha), SMS_TEXT_CENTER | SMS_TEXT_SHADOW, text);
+	}
+
+	// Where a new file starts: the level the shuffle (or the plando's `entrance start`) put there, else the
+	// plaza (with Entrances Off and a plando that sets entrances only, the plaza too).
+	uint16_t newFileStart() const
+	{
+		return shuffle() && startLevel() != 0 ? swapOf(0) : (uint16_t)0x100;
 	}
 
 	// The shuffle's first level (where a new file starts), or 0 without the shuffle. A
@@ -2645,6 +2729,12 @@ struct Randomizer : sms::Mod {
 		const uint16_t id = (uint16_t)(st.select_area << 8 | st.select_episode);
 		const uint16_t to = shuffle() ? swapOf(id) : id;
 		const int li      = indexOfLevel(to);
+		if (titleMissingFor_ == (int)id && (li < 0 || !seenLevels_[li])) {
+			// the game's title is the episode's own, not the level loaded's: the level's name under it (a level the
+			// file has been in gets this line with the rest below)
+			draw().text(d.canvas_w / 2.0f, d.canvas_h * 0.808f - 11.0f, 18, SMS_RGB(255, 255, 255), SMS_TEXT_CENTER | SMS_TEXT_SHADOW,
+			            ("leads to " + levelName(to)).c_str());
+		}
 		if (li < 0 || !seenLevels_[li])
 			return;
 		if (trackerAt_ < 0 || core().time() - trackerAt_ > 0.5)
@@ -3255,10 +3345,10 @@ struct Randomizer : sms::Mod {
 			if (setting("random_seed", 0) && !gameHasBeta(6))
 				drawSeed(); // Use random seed: a new file gets its own (SAVE_FILE draws it on beta 6)
 			refresh();
-			const uint16_t first = shuffle() ? swapOf(0) : (uint16_t)0x100;
+			const uint16_t first = newFileStart();
 			e.area               = first >> 8;
 			e.episode            = first & 0xFF;
-			startPlaced_         = shuffle() ? first : -1;
+			startPlaced_         = shuffle() && startLevel() != 0 ? first : -1;
 		});
 
 #ifdef RANDOMIZER_STAGE_LOADING
@@ -3552,16 +3642,57 @@ struct Randomizer : sms::Mod {
 				if (!enabled() || !shuffle())
 					return; // without the shuffle an episode stands for its own Shine, as in the game
 				refresh();
+				if (!episodeNamesOk_)
+					updateEpisodeNames(); // (the episodes are there by now)
+				// A secret course in a world (areas 0x15 to 0x34 with a Shine in the game's exShineTable, as
+				// SMS_getShineIDofExStage gives it): the Shine the game names it by, so that its own title shows.
+				// (The plaza's five secret courses have none: the game has no title for them.)
+				static const struct {
+					int area, shine;
+				} kExTitles[] = { { 0x1F, 0x37 }, { 0x20, 0x14 }, { 0x28, 0x2B }, { 0x29, 0x23 }, { 0x2A, 0x40 },
+					              { 0x2E, 0x05 }, { 0x2F, 0x02 }, { 0x30, 0x0D }, { 0x32, 0x1F }, { 0x33, 0x29 } };
+				const uint16_t dest = swapOf((uint16_t)(e.area << 8 | e.episode));
+				for (size_t k = 0; k < sizeof kExTitles / sizeof kExTitles[0]; ++k) {
+					if ((dest >> 8) == kExTitles[k].area) {
+						titleMissingFor_ = -1;
+						e.shine          = kExTitles[k].shine;
+						return;
+					}
+				}
 				std::vector<int> shines;
 				bool seen[gen::kLevelCount] = {};
 				episodeShines((uint16_t)(e.area << 8 | e.episode), seen, shines);
 				// only a Shine the game has an episode name for (scScenarioNameTable: 0 to
 				// 69); the episode select reads past it, and faults, for the others
-				shines.erase(std::remove_if(shines.begin(), shines.end(), [](int s) { return s < 0 || s >= 70; }),
+				const std::vector<int> every = shines; // before the filter: a secret course's Shine has no title the table knows
+				// and only an episode's own Shine (its number ends in 0 to 7 in each world's ten: the 8th and 9th are the
+				// secret courses' red coins, which the select has no title for)
+				shines.erase(std::remove_if(shines.begin(), shines.end(), [](int s) { return s < 0 || s >= 70 || s % 10 > 7; }),
 				             shines.end());
-				if (shines.empty())
+				if (shines.empty()) {
+#ifdef RANDOMIZER_EPISODE_NAMES
+					if (SMS_API_HAS(&api(), world) && SMS_API_HAS(api().world, set_episode_name)) {
+						// named by the mod (updateEpisodeNames): the Shine of the level the episode now leads to (or none),
+						// so that its collected mark is right
+						int pick = every.empty() ? -1 : every[0];
+						for (size_t i = 0; i < every.size(); ++i) {
+							if (!game().has_shine(every[i])) {
+								pick = every[i];
+								break;
+							}
+						}
+						titleMissingFor_ = -1;
+						e.shine          = pick;
+						return;
+					}
+#endif
+					// no title of the game's for this level (the mod API before beta 4 cannot name it): its name is
+					// drawn as the line under the title, which stays the episode's
+					titleMissingFor_ = e.area << 8 | e.episode;
 					return;
-				e.shine = shines[0];
+				}
+				titleMissingFor_ = -1;
+				e.shine          = shines[0];
 				for (size_t i = 0; i < shines.size(); ++i) {
 					if (!game().has_shine(shines[i])) {
 						e.shine = shines[i];
@@ -3788,6 +3919,14 @@ struct Randomizer : sms::Mod {
 			}
 			if (!e.pads)
 				return;
+			// Jump during a ground spin with the spin jump locked: the game starts a spin jump, which the mod
+			// turns into a jump once it has begun (the spin's animation runs on, slowly). Ask for the jump
+			// as the button goes down, before the game starts the spin jump.
+			if (active() && locked(SPIN_JUMP) && !locked(GROUND_SPIN) && (e.pads[0].buttons & SMS_PAD_A)) {
+				const SmsPlayer m = mario();
+				if (m.valid && m.status == 0x441)
+					player().set_status(kJump, 0);
+			}
 			// Backspace is B at the file select (the game's menus have no key for it, though the port's own
 			// have), held as a button is: the press that closed our screen goes on to the game's menu, as
 			// the controller's B does
@@ -3837,9 +3976,17 @@ struct Randomizer : sms::Mod {
 				const int want = (pressed & SMS_PAD_UP) ? 4 : (pressed & SMS_PAD_LEFT) ? 1 : 5;
 				const SmsPlayer m = mario();
 				if (m.valid && m.has_fludd && m.current_nozzle != 3 && m.nozzle != want) {
-					if (nozzleAllowed(want))
-						player().set_nozzle(want, 1);
-					else
+					if (nozzleAllowed(want)) {
+						if (m.current_nozzle == 0) {
+							// the spray is out: the D-pad changes the other nozzle, the one in the pack, and keeps the
+							// spray out (a swap, Q, brings the new one)
+							player().set_nozzle(want, 0);
+							player().set_nozzle(0, 0);
+							audio().play_system_sound(SMS_SOUND_CURSOR);
+						} else {
+							player().set_nozzle(want, 1);
+						}
+					} else
 						audio().play_system_sound(0x483D);
 				}
 			}

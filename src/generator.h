@@ -948,7 +948,8 @@ private:
 
 	bool walk()
 	{
-		static const uint16_t kFixed[] = { 0x100, 0x101, 0x102, 0x105, 0x106, 0x107, 0x108, 0x109, 0x3400, 0x3C00 };
+		// (0x0F00 is the title's plaza, which the game never loads from a stage, and 0x0C01 a test room: left where they are)
+		static const uint16_t kFixed[] = { 0x100, 0x101, 0x102, 0x105, 0x106, 0x107, 0x108, 0x109, 0x3400, 0x3C00, 0x0F00, 0x0C01 };
 		std::vector<uint16_t> fixed(kFixed, kFixed + sizeof kFixed / sizeof kFixed[0]);
 		for (size_t i = 0; i < fixed.size(); ++i)
 			place(fixed[i], fixed[i]);

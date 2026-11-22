@@ -10,7 +10,7 @@ project(sms_randomizer CXX)
 include(FetchContent)
 FetchContent_Declare(sms_mod_sdk
   GIT_REPOSITORY https://github.com/chasem-dev/sms-mod-sdk.git
-  GIT_TAG v1.8.0-beta.3
+  GIT_TAG v1.8.0-beta.4
   GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(sms_mod_sdk)
 
